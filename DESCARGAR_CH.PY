@@ -11,7 +11,7 @@
 # 6. Generar REPORTE en Excel al final (misma carpeta DESCARGAS) con estructura
 #    basada en los campos de lectura utilizados (B/H/I-L/BC/BG/BH/BI/BJ) + estado.
 # 7. Después de introducir contraseña, esperar X segundos antes de "Ingresar"
-#    (configurable desde la interfaz; default = 5s).
+#    (configurable desde la interfaz; default = 5s). kkkkkkk
 # ------------------------------------------------------------------------------
 
 import os
