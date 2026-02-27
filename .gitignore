@@ -1,0 +1,12 @@
+DESCRGAR SOPORTES/
+DESCARGAS
+CREDENCIALES
+__pycache__
+empaquetar
+downloads
+build
+dist
+debug_reportes
+
+*.zip
+*.json
