@@ -11,9 +11,11 @@
 # 6. Generar REPORTE en Excel al final (misma carpeta DESCARGAS) con estructura
 #    basada en los campos de lectura utilizados (B/H/I-L/BC/BG/BH/BI/BJ) + estado.
 # 7. Después de introducir contraseña, esperar X segundos antes de "Ingresar"
-#    (configurable desde la interfaz; default = 5s). kkkkkkk
+#    (configurable desde la interfaz; default = 5s). KKKKKK
+# 8. APLICAR EN GESTIONA el filtro de fechas (inputs #from y #to) según la interfaz.
 # ------------------------------------------------------------------------------
 
+# me gusta jaider
 import os
 import sys
 import re
@@ -40,6 +42,7 @@ try:
 except Exception:
     load_workbook = None
     column_index_from_string = None
+
 
 # ==============================================================================
 # 0) CONFIGURACIÓN Y RUTAS (CORREGIDO PARA .PY y .EXE)
@@ -82,6 +85,10 @@ SEL_PASS = "input[name='password'], input[placeholder*='Contraseña'], input[typ
 # Selectores Reportes
 SEL_BTN_GENERAR = "#button_pdf"
 SEL_CAT_REGISTROS = "a.category_for_reports[data-category='2'], a.category_for_reports:has-text('Registros')"
+
+# ✅ Selectores filtro fechas en Gestiona (según HTML que enviaste)
+SEL_DATE_FROM = "#from"   # <input id="from" name="from" ...>
+SEL_DATE_TO   = "#to"     # <input id="to"   name="to"   ...>
 
 # Valores Fijos Formulario
 TIPO_REPORTE_VALUE = "10"  # 2. Evoluciones (PDF)
@@ -666,6 +673,96 @@ def _select_by_label_contains(page, select_selector: str, label_text: str, timeo
         raise RuntimeError(f"Opción no encontrada: '{label_text}' en {select_selector}")
     page.select_option(select_selector, value=val, timeout=4000)
 
+# ✅ Set agresivo para datepicker
+def _set_input_value(page, selector: str, value: str, timeout_ms: int = 12000) -> bool:
+    loc = page.locator(selector).first
+    if loc.count() == 0:
+        return False
+    try:
+        loc.wait_for(state="visible", timeout=timeout_ms)
+    except Exception:
+        return False
+
+    try:
+        loc.click()
+        try:
+            loc.press("Control+A")
+        except Exception:
+            pass
+        try:
+            loc.fill("")
+        except Exception:
+            pass
+        try:
+            loc.type(value, delay=25)
+        except Exception:
+            loc.fill(value)
+        try:
+            loc.press("Enter")
+        except Exception:
+            pass
+        try:
+            loc.press("Tab")
+        except Exception:
+            pass
+
+        h = loc.element_handle(timeout=timeout_ms)
+        if h:
+            page.evaluate(
+                "(el) => { el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); el.dispatchEvent(new Event('blur',{bubbles:true})); }",
+                h
+            )
+        return True
+    except Exception:
+        pass
+
+    try:
+        h = loc.element_handle(timeout=timeout_ms)
+        if not h:
+            return False
+        page.evaluate(
+            """(el, val) => {
+                try { el.removeAttribute('readonly'); } catch(e) {}
+                el.value = val;
+                el.dispatchEvent(new Event('input',{bubbles:true}));
+                el.dispatchEvent(new Event('change',{bubbles:true}));
+                el.dispatchEvent(new Event('blur',{bubbles:true}));
+            }""",
+            h, value
+        )
+        return True
+    except Exception:
+        return False
+
+def aplicar_filtro_fechas_en_gestiona(page, desde: datetime, hasta: datetime, log):
+    if not desde or not hasta:
+        return
+    d0 = desde.strftime("%Y-%m-%d")
+    d1 = hasta.strftime("%Y-%m-%d")
+
+    log(f"[FILTRO] Seteando en Gestión: {d0} → {d1}")
+
+    try:
+        page.wait_for_selector(SEL_DATE_FROM, timeout=12000)
+        page.wait_for_selector(SEL_DATE_TO, timeout=12000)
+    except Exception:
+        log("[FILTRO][WARN] No encontré inputs #from/#to en la página.")
+        return
+
+    ok_from = _set_input_value(page, SEL_DATE_FROM, d0)
+    ok_to   = _set_input_value(page, SEL_DATE_TO, d1)
+
+    if not (ok_from and ok_to):
+        log("[FILTRO][WARN] No pude setear #from/#to (no visibles o no editables).")
+        return
+
+    try:
+        v_from = page.locator(SEL_DATE_FROM).first.input_value(timeout=800)
+        v_to   = page.locator(SEL_DATE_TO).first.input_value(timeout=800)
+        log(f"[FILTRO] Confirmado: {v_from} → {v_to}")
+    except Exception:
+        pass
+
 def asegurar_fijos_formulario(page, log):
     tipo_sel = _xpath_select_following("Tipo Reporte")
     _select_value_fast(page, tipo_sel, TIPO_REPORTE_VALUE, "Tipo Reporte", 2000)
@@ -752,8 +849,16 @@ def set_documento_paciente_or_fail(page, doc: str, log):
 
     raise RuntimeError(f"No se pudo seleccionar el paciente {doc}")
 
-def generar_y_descargar_pdf(page, task: Task, output_dir: str, log) -> str:
+# ✅ AJUSTE REAL: aplicar #from/#to DESPUÉS de asegurar_fijos_formulario y ANTES de generar
+def generar_y_descargar_pdf(page, task: Task, output_dir: str, log,
+                            fecha_desde: Optional[datetime] = None,
+                            fecha_hasta: Optional[datetime] = None) -> str:
     asegurar_fijos_formulario(page, log)
+
+    # ✅ Reaplicar fechas aquí porque asegurar_fijos_formulario puede resetear el rango
+    if fecha_desde and fecha_hasta:
+        aplicar_filtro_fechas_en_gestiona(page, fecha_desde, fecha_hasta, log)
+
     set_documento_paciente_or_fail(page, task.doc, log)
     page.wait_for_timeout(500)
 
@@ -1258,7 +1363,11 @@ class App(tk.Tk):
                         self._log_msg("[CICLO] Refrescando página...")
                         asegurar_reportes_listo(page, self._log_msg, force_refresh=True)
 
-                        pdf_path = generar_y_descargar_pdf(page, t, cfg.output_dir, self._log_msg)
+                        pdf_path = generar_y_descargar_pdf(
+                            page, t, cfg.output_dir, self._log_msg,
+                            fecha_desde=cfg.fecha_desde,
+                            fecha_hasta=cfg.fecha_hasta
+                        )
                         ok_count += 1
 
                         resultados.append({
